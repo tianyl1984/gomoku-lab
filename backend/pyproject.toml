@@ -1,0 +1,10 @@
+[project]
+name = "gomoku-lab-backend"
+version = "0.1.0"
+description = "Gomoku Lab backend: agent-vs-agent gomoku arena (in-memory state)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
+]
