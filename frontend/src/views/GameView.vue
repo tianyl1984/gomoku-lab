@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { getGame, watchGame } from '../api/games'
 import AgentGuide from '../components/AgentGuide.vue'
 import GomokuBoard from '../components/GomokuBoard.vue'
@@ -12,6 +13,8 @@ const props = defineProps({
 
 const NOT_FOUND = '对局不存在（可能因长时间无 agent 加入已被销毁，或后端已重启）'
 const EXPIRED = '长时间没有 agent 加入，对局已自动销毁'
+
+const router = useRouter()
 
 const CONNECTION_LABEL = {
   connecting: '连接中…',
@@ -160,7 +163,11 @@ watch(
             <span v-if="headlineColor" class="chip" :class="headlineColor" />
             {{ headline }}
           </div>
-          <div v-if="over" class="reason">{{ endReasonText(game) }}</div>
+          <template v-if="over">
+            <div class="reason">{{ endReasonText(game) }}</div>
+            <!-- 首页会新建一局并跳转过去 -->
+            <button type="button" class="primary restart" @click="router.push('/')">重开一局</button>
+          </template>
           <div v-else-if="joinRemainingMs !== null" class="reason">
             {{ formatDuration(joinRemainingMs) }} 内无 agent 加入，对局将自动销毁
           </div>
@@ -285,6 +292,10 @@ button.small {
   margin-top: 0.2rem;
   font-size: 0.9rem;
   color: var(--text-muted);
+}
+.restart {
+  margin-top: 0.7rem;
+  width: 100%;
 }
 .players {
   display: flex;
