@@ -10,11 +10,17 @@ services:
       context: ..
       dockerfile: deploy/backend.Dockerfile
     environment:
-      MOVE_TIMEOUT_SECONDS: 120   # 落子超时（秒）
-      MAX_INVALID_MOVES: 5        # 累计非法落子判负次数
-      JOIN_TIMEOUT_SECONDS: 1800  # 等待中的对局无新 agent 加入即销毁（秒）
+      MOVE_TIMEOUT_SECONDS: 120 # 落子超时（秒）
+      MAX_INVALID_MOVES: 5 # 累计非法落子判负次数
+      JOIN_TIMEOUT_SECONDS: 1800 # 等待中的对局无新 agent 加入即销毁（秒）
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -26,7 +32,7 @@ services:
       context: ..
       dockerfile: deploy/frontend.Dockerfile
     ports:
-      - "80:80"
+      - "8081:80"
     depends_on:
       backend:
         condition: service_healthy
