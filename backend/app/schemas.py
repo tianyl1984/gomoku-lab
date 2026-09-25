@@ -1,30 +1,21 @@
 """Wire format shared by the HTTP API and the SSE stream."""
 
 from datetime import UTC, datetime
-from typing import Literal, Self
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from app.game.board import Stone
 from app.game.game import EndReason, Game, GameStatus, Move, Player
 
 Color = Literal["black", "white"]
-EventType = Literal["snapshot", "player_joined", "game_started", "move", "game_over"]
+EventType = Literal[
+    "snapshot", "player_joined", "game_started", "move", "game_over", "game_expired"
+]
 
 
 def color_of(stone: Stone) -> Color:
     return "black" if stone is Stone.BLACK else "white"
-
-
-class GameCreate(BaseModel):
-    size: int = Field(15, ge=5, le=25, description="棋盘边长")
-    win_length: int = Field(5, ge=3, le=10, description="连成几子获胜")
-
-    @model_validator(mode="after")
-    def _check_fits(self) -> Self:
-        if self.win_length > self.size:
-            raise ValueError("win_length must be <= size")
-        return self
 
 
 class JoinRequest(BaseModel):
@@ -85,6 +76,9 @@ class GameState(BaseModel):
     move_timeout_seconds: float
     max_invalid_moves: int = Field(description="累计非法落子达到该次数即判负")
     turn_deadline: datetime | None = Field(description="当前行棋方的落子截止时间")
+    join_deadline: datetime | None = Field(
+        description="仅 waiting 时有值：到该时刻仍无新 agent 加入，对局将被销毁"
+    )
     created_at: datetime
     started_at: datetime | None
     ended_at: datetime | None
@@ -107,6 +101,7 @@ class GameState(BaseModel):
             move_timeout_seconds=game.move_timeout.total_seconds(),
             max_invalid_moves=game.max_invalid_moves,
             turn_deadline=game.turn_deadline,
+            join_deadline=game.join_deadline,
             created_at=game.created_at,
             started_at=game.started_at,
             ended_at=game.ended_at,
@@ -149,5 +144,7 @@ class GameEvent(BaseModel):
 
     @property
     def is_terminal(self) -> bool:
-        """Last event of a stream: game_over, or a snapshot of an already finished game."""
-        return self.type == "game_over" or (self.type == "snapshot" and self.state.status.is_over)
+        """Last event of a stream: game_over, game_expired, or a snapshot of a finished game."""
+        if self.type in ("game_over", "game_expired"):
+            return True
+        return self.type == "snapshot" and self.state.status.is_over

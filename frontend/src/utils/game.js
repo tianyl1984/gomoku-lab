@@ -1,13 +1,5 @@
 export const COLOR_NAME = { black: '黑方', white: '白方' }
 
-export const STATUS_LABEL = {
-  waiting: '等待加入',
-  playing: '对战中',
-  black_win: '黑方胜',
-  white_win: '白方胜',
-  draw: '平局',
-}
-
 export const isOver = (status) => ['black_win', 'white_win', 'draw'].includes(status)
 
 export function endReasonText(state) {

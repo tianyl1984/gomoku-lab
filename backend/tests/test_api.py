@@ -52,16 +52,17 @@ def parse_sse(text):
 
 
 def test_create_game(client):
-    res = client.post("/api/games", json={"size": 19})
+    res = client.post("/api/games")
     assert res.status_code == 201
     data = res.json()
-    assert data["size"] == 19
+    assert (data["size"], data["win_length"]) == (15, 5)
+    assert data["join_deadline"] is not None
     assert data["status"] == "waiting"
     assert data["players"] == {"black": None, "white": None}
     assert data["current_player"] is None
     assert data["move_timeout_seconds"] == 120
-    assert client.post("/api/games", json={"size": 4}).status_code == 422
-    assert client.post("/api/games", json={"size": 5, "win_length": 6}).status_code == 422
+    # 棋盘大小固定，请求体里的参数会被忽略
+    assert client.post("/api/games", json={"size": 19}).json()["size"] == 15
 
 
 def test_join_flow(client, game_id):
@@ -145,6 +146,13 @@ def test_events_stream_format(client, game_id, seats):
     assert arena.subscriber_count(game_id) == 0
 
 
+def test_abandoned_game_is_destroyed(client, game_id):
+    game = arena.get(game_id)
+    arena.expire_abandoned(game.join_deadline)
+    assert client.get(f"/api/games/{game_id}").json()["code"] == "game_not_found"
+    assert game_id not in [g["id"] for g in client.get("/api/games").json()]
+
+
 def test_not_found(client):
     for res in (
         client.get("/api/games/nope"),
@@ -177,7 +185,6 @@ def test_malformed_body_uses_unified_error_format(client, game_id, seats):
         data = res.json()
         assert data["code"] == "invalid_request"
         assert data["detail"].startswith(f"{field}: ")
-    assert client.post("/api/games", json={"size": "big"}).json()["code"] == "invalid_request"
     # 格式错误不计入非法落子
     state = client.get(f"/api/games/{game_id}").json()
     assert state["players"]["black"]["invalid_moves"] == 0

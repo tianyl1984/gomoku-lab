@@ -10,6 +10,9 @@ const props = defineProps({
   id: { type: String, required: true },
 })
 
+const NOT_FOUND = '对局不存在（可能因长时间无 agent 加入已被销毁，或后端已重启）'
+const EXPIRED = '长时间没有 agent 加入，对局已自动销毁'
+
 const CONNECTION_LABEL = {
   connecting: '连接中…',
   open: '实时',
@@ -32,6 +35,11 @@ let unwatch = null
 function apply(event) {
   if (event.seq < lastSeq) return
   lastSeq = event.seq
+  if (event.type === 'game_expired') {
+    game.value = null
+    error.value = EXPIRED
+    return
+  }
   game.value = event.state
   // now 与 offset 必须取自同一时刻，否则倒计时会短暂超出上限
   now.value = Date.now()
@@ -49,7 +57,7 @@ async function load(id) {
     // 先用 HTTP 取一次：EventSource 拿不到 404 等状态码
     apply({ seq: -1, state: await getGame(id) })
   } catch (e) {
-    error.value = e.status === 404 ? '对局不存在（后端重启后内存中的对局会丢失）' : e.message
+    error.value = e.status === 404 ? NOT_FOUND : e.message
     connection.value = 'closed'
     return
   }
@@ -73,11 +81,18 @@ const seated = computed(() =>
   game.value ? ['black', 'white'].filter((c) => game.value.players[c]).length : 0,
 )
 
+const msUntil = (deadline) => Math.max(0, Date.parse(deadline) - (now.value + clockOffset.value))
+
 const remainingMs = computed(() => {
   const deadline = game.value?.turn_deadline
   if (!deadline) return null
-  const ms = Date.parse(deadline) - (now.value + clockOffset.value)
-  return Math.min(Math.max(0, ms), game.value.move_timeout_seconds * 1000)
+  return Math.min(msUntil(deadline), game.value.move_timeout_seconds * 1000)
+})
+
+// 等待期间：到 join_deadline 仍无新 agent 加入，服务器会销毁对局
+const joinRemainingMs = computed(() => {
+  const deadline = game.value?.join_deadline
+  return deadline ? msUntil(deadline) : null
 })
 
 const headline = computed(() => {
@@ -125,7 +140,7 @@ watch(
     </div>
 
     <p v-if="error" class="error" role="alert">
-      {{ error }} · <RouterLink to="/">返回大厅</RouterLink>
+      {{ error }} · <RouterLink to="/">新开一局</RouterLink>
     </p>
 
     <div v-if="game" class="layout">
@@ -146,6 +161,9 @@ watch(
             {{ headline }}
           </div>
           <div v-if="over" class="reason">{{ endReasonText(game) }}</div>
+          <div v-else-if="joinRemainingMs !== null" class="reason">
+            {{ formatDuration(joinRemainingMs) }} 内无 agent 加入，对局将自动销毁
+          </div>
         </div>
 
         <div class="card players">

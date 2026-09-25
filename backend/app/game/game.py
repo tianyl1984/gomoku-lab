@@ -87,6 +87,8 @@ class Game:
     board: Board
     move_timeout: timedelta
     max_invalid_moves: int = 5
+    # 等待期间超过该时长没有新 agent 加入，对局即被销毁
+    join_timeout: timedelta = timedelta(minutes=30)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     status: GameStatus = GameStatus.WAITING
     players: dict[Stone, Player] = field(default_factory=dict)
@@ -107,11 +109,13 @@ class Game:
         win_length: int = 5,
         move_timeout: timedelta = timedelta(minutes=2),
         max_invalid_moves: int = 5,
+        join_timeout: timedelta = timedelta(minutes=30),
     ) -> "Game":
         return cls(
             board=Board(size, win_length),
             move_timeout=move_timeout,
             max_invalid_moves=max_invalid_moves,
+            join_timeout=join_timeout,
         )
 
     @property
@@ -126,6 +130,19 @@ class Game:
         if self.status is not GameStatus.PLAYING or self.turn_started_at is None:
             return None
         return self.turn_started_at + self.move_timeout
+
+    @property
+    def join_deadline(self) -> datetime | None:
+        """While waiting: creation or the latest join, plus join_timeout. The clock resets on each join."""
+        if self.status is not GameStatus.WAITING:
+            return None
+        last_activity = max([self.created_at, *(p.joined_at for p in self.players.values())])
+        return last_activity + self.join_timeout
+
+    def is_abandoned(self, now: datetime | None = None) -> bool:
+        """True once a waiting game has gone join_timeout without any agent joining."""
+        deadline = self.join_deadline
+        return deadline is not None and (now or _now()) >= deadline
 
     def seat_of(self, secret: str) -> Stone | None:
         for stone, player in self.players.items():

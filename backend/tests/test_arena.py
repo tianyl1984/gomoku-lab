@@ -27,7 +27,7 @@ def join_both(arena, game_id):
 
 
 def test_subscriber_gets_snapshot_then_lifecycle_events(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     queue = arena.subscribe(game.id)
     [snapshot] = drain(queue)
     assert snapshot.type == "snapshot"
@@ -50,7 +50,7 @@ def test_subscriber_gets_snapshot_then_lifecycle_events(arena):
 
 
 def test_rejoin_does_not_publish(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     queue = arena.subscribe(game.id)
     arena.join(game.id, "secret-aaaa", None)
     arena.join(game.id, "secret-aaaa", None)
@@ -58,7 +58,7 @@ def test_rejoin_does_not_publish(arena):
 
 
 def test_winning_move_publishes_move_then_game_over(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     colors = join_both(arena, game.id)
     queue = arena.subscribe(game.id)
     drain(queue)
@@ -75,7 +75,7 @@ def test_winning_move_publishes_move_then_game_over(arena):
 
 
 def test_expire_timeouts_publishes_game_over(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     join_both(arena, game.id)
     queue = arena.subscribe(game.id)
     drain(queue)
@@ -89,7 +89,7 @@ def test_expire_timeouts_publishes_game_over(arena):
 
 
 def test_snapshot_of_finished_game_is_terminal(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     join_both(arena, game.id)
     arena.expire_timeouts(game.turn_deadline)
     [snapshot] = drain(arena.subscribe(game.id))
@@ -97,7 +97,7 @@ def test_snapshot_of_finished_game_is_terminal(arena):
 
 
 def test_unsubscribe(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     queue = arena.subscribe(game.id)
     assert arena.subscriber_count(game.id) == 1
     arena.unsubscribe(game.id, queue)
@@ -114,7 +114,7 @@ def test_unknown_game(arena):
 
 
 def test_invalid_move_publishes_nothing_until_it_loses(arena):
-    game = arena.create(15, 5)
+    game = arena.create()
     colors = join_both(arena, game.id)
     queue = arena.subscribe(game.id)
     drain(queue)
@@ -129,3 +129,29 @@ def test_invalid_move_publishes_nothing_until_it_loses(arena):
     assert over.state.winner == "white"
     assert over.state.end_reason == "invalid_moves"
     assert over.state.players.black.invalid_moves == 5
+
+
+def test_expire_abandoned_publishes_game_expired_and_frees_the_game(arena):
+    game = arena.create()
+    queue = arena.subscribe(game.id)
+    drain(queue)
+    arena.expire_abandoned(game.join_deadline - timedelta(seconds=1))
+    assert drain(queue) == []
+    assert arena.get(game.id) is game
+
+    arena.expire_abandoned(game.join_deadline)
+    [expired] = drain(queue)
+    assert expired.type == "game_expired" and expired.is_terminal
+    assert expired.state.status == "waiting"
+    with pytest.raises(GameNotFoundError):
+        arena.get(game.id)
+    assert arena.list() == []
+    assert arena.subscriber_count(game.id) == 0
+    arena.unsubscribe(game.id, queue)  # SSE 生成器的 finally 仍会调用，不能报错
+
+
+def test_expire_abandoned_keeps_started_games(arena):
+    started, waiting = arena.create(), arena.create()
+    join_both(arena, started.id)
+    arena.expire_abandoned(waiting.join_deadline)
+    assert arena.list() == [started]

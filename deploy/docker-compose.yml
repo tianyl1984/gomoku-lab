@@ -1,0 +1,33 @@
+# 用法（在 deploy/ 目录下）：docker compose up -d --build
+#
+# 浏览器访问 http://<服务器地址>。nginx 提供前端静态文件，并把 /api 反向代理到后端；
+# 后端不对外暴露端口。所有对局只保存在后端内存中，容器重启即清空。
+name: gomoku-lab
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    environment:
+      MOVE_TIMEOUT_SECONDS: 120   # 落子超时（秒）
+      MAX_INVALID_MOVES: 5        # 累计非法落子判负次数
+      JOIN_TIMEOUT_SECONDS: 1800  # 等待中的对局无新 agent 加入即销毁（秒）
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

@@ -130,6 +130,9 @@ def main() -> None:
         state = data["state"]
         if event == "game_started":
             print(f"[{name}] game started")
+        if event == "game_expired":
+            print(f"[{name}] game expired: no opponent joined in time")
+            return
         if state["status"] not in ("waiting", "playing"):
             result = "draw" if state["winner"] is None else f"{state['winner']} wins"
             outcome = "WIN" if state["winner"] == color else "LOSS" if state["winner"] else "DRAW"

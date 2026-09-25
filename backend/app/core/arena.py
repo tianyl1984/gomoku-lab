@@ -20,15 +20,26 @@ class GameNotFoundError(Exception):
 
 
 class Arena:
-    def __init__(self, move_timeout: timedelta, max_invalid_moves: int = 5) -> None:
+    def __init__(
+        self,
+        move_timeout: timedelta,
+        max_invalid_moves: int = 5,
+        join_timeout: timedelta = timedelta(minutes=30),
+    ) -> None:
         self.move_timeout = move_timeout
         self.max_invalid_moves = max_invalid_moves
+        self.join_timeout = join_timeout
         self._games: dict[str, Game] = {}
         self._seq: dict[str, int] = {}
         self._subscribers: dict[str, set[asyncio.Queue[GameEvent]]] = {}
 
-    def create(self, size: int, win_length: int) -> Game:
-        game = Game.new(size, win_length, self.move_timeout, self.max_invalid_moves)
+    def create(self) -> Game:
+        """Board size (15) and win length (5) are fixed for every game."""
+        game = Game.new(
+            move_timeout=self.move_timeout,
+            max_invalid_moves=self.max_invalid_moves,
+            join_timeout=self.join_timeout,
+        )
         self._games[game.id] = game
         self._seq[game.id] = 0
         self._subscribers[game.id] = set()
@@ -72,9 +83,19 @@ class Arena:
             if game.check_timeout(now):
                 self._publish(game, "game_over")
 
+    def expire_abandoned(self, now: datetime | None = None) -> None:
+        """Destroy waiting games no agent has joined within join_timeout, freeing their memory.
+
+        Subscribers get a final game_expired event; afterwards the game id answers 404.
+        """
+        for game in [g for g in self._games.values() if g.is_abandoned(now)]:
+            self._publish(game, "game_expired")
+            del self._games[game.id], self._seq[game.id], self._subscribers[game.id]
+
     async def run_timeout_loop(self, interval: float = 0.5) -> None:
         while True:
             self.expire_timeouts()
+            self.expire_abandoned()
             await asyncio.sleep(interval)
 
     def subscribe(self, game_id: str) -> asyncio.Queue[GameEvent]:
@@ -101,4 +122,8 @@ class Arena:
             queue.put_nowait(event)
 
 
-arena = Arena(timedelta(seconds=settings.move_timeout_seconds), settings.max_invalid_moves)
+arena = Arena(
+    timedelta(seconds=settings.move_timeout_seconds),
+    settings.max_invalid_moves,
+    timedelta(seconds=settings.join_timeout_seconds),
+)

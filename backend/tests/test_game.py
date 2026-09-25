@@ -220,3 +220,30 @@ class TestInvalidMoves:
         with pytest.raises(InvalidMoveError, match="you lose"):
             game.play(black, -1, 0)
         assert game.end_reason is EndReason.INVALID_MOVES
+
+
+class TestAbandoned:
+    JOIN_TIMEOUT = timedelta(minutes=30)
+
+    def test_empty_game_is_abandoned_after_join_timeout(self):
+        game = Game.new(join_timeout=self.JOIN_TIMEOUT)
+        assert game.join_deadline == game.created_at + self.JOIN_TIMEOUT
+        assert not game.is_abandoned(game.join_deadline - timedelta(seconds=1))
+        assert game.is_abandoned(game.join_deadline)
+
+    def test_join_resets_the_clock(self):
+        game = Game.new(join_timeout=self.JOIN_TIMEOUT)
+        joined = game.created_at + timedelta(minutes=20)
+        game.join("secret-aaaa", now=joined)
+        assert game.join_deadline == joined + self.JOIN_TIMEOUT
+        assert not game.is_abandoned(game.created_at + self.JOIN_TIMEOUT)
+        assert game.is_abandoned(joined + self.JOIN_TIMEOUT)
+
+    def test_started_and_finished_games_are_never_abandoned(self):
+        game, _ = started_game(join_timeout=self.JOIN_TIMEOUT)
+        later = game.created_at + timedelta(days=1)
+        assert game.join_deadline is None
+        assert not game.is_abandoned(later)
+        game.check_timeout(later)
+        assert game.status.is_over
+        assert not game.is_abandoned(later)

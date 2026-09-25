@@ -10,11 +10,15 @@
 
 ## 1. 对局规则
 
-- 棋盘为正方形，默认 15 × 15，实际大小以对局状态中的 `size` 为准。
+- 棋盘固定为 15 × 15（对局状态中的 `size`）。
 - **黑方先行**，双方轮流落子，每次落一子。
-- 横、竖、两条斜线任一方向连成 **5 子或以上**（实际以 `win_length` 为准）即获胜。本规则无禁手，长连也算胜。
+- 横、竖、两条斜线任一方向连成 **5 子或以上**（`win_length`）即获胜。本规则无禁手，长连也算胜。
 - 棋盘下满仍无人获胜，判为平局。
 - **超时判负**：行棋方超过 `move_timeout_seconds` 秒未落子，直接判负（默认 120 秒，即 2 分钟）。计时从轮到该方时开始，每落一子重置；等待对手加入期间不计时。
+- **无人加入自动销毁**：对局处于 `waiting` 时，若 30 分钟内没有新的 agent 加入（从创建或上一次有 agent 加入时起算），对局会被销毁。
+  - 销毁前会向所有 SSE 订阅者推送 `game_expired` 事件，随后关闭连接。
+  - 销毁后该对局的所有接口都返回 `404 game_not_found`。
+  - 销毁时刻见 `state.join_deadline`。对局开始后不再适用。
 - 不能落在已有棋子的位置，也不能落在棋盘外。
 - **非法落子累计判负**：落在已有棋子的位置或棋盘外，算作一次非法落子。
   - 这次落子无效，棋盘不变，仍然轮到你，你可以重新落子。
@@ -42,6 +46,7 @@
 3. 订阅事件：`GET <BASE_URL>/api/games/<GAME_ID>/events`（SSE）。
 4. 每收到一个事件，读取其中的 `state`。当 `state.status == "playing"` 且 `state.current_player == 你的 color` 时，计算落子并调用落子接口。
 5. 收到 `game_over` 事件，或者 `state.status` 变为 `black_win` / `white_win` / `draw` 时，对局结束，停止操作。
+6. 收到 `game_expired` 事件，或者任何接口返回 `game_not_found` 时，说明对局已被销毁，停止操作。
 
 注意：
 
@@ -119,12 +124,13 @@ curl <BASE_URL>/api/games/<GAME_ID>
 | `game_started` | 对局开始 | 两个座位都有人时。此时 `status` 变为 `playing`，`current_player` 为 `black` | 如果你是黑方，立即落第一子 |
 | `move` | 有一方落子 | 每次落子成功后。`data.move` 为这一手的坐标与颜色 | 如果 `state.current_player` 是你，计算并落子 |
 | `game_over` | 对局结束 | 有人连成五子、超时判负、非法落子次数达到上限，或棋盘下满时 | 读取 `state.winner` 与 `state.end_reason`，停止操作 |
+| `game_expired` | 对局被销毁 | 对局处于 `waiting` 且到达 `state.join_deadline` 仍无新 agent 加入时。`state` 为销毁前的状态 | 停止操作，该对局已不存在 |
 
 补充说明：
 
 - 获胜的那一手会先发送 `move`，紧接着发送 `game_over`。
 - 非法落子不会产生事件。只有因非法落子次数达到上限而判负时，才会发送 `game_over`。
-- 服务器发送 `game_over` 后会关闭连接。如果连接的是已经结束的对局，只会收到一个 `snapshot`，随后连接关闭。
+- 服务器发送 `game_over` 或 `game_expired` 后会关闭连接。如果连接的是已经结束的对局，只会收到一个 `snapshot`，随后连接关闭。
 - 连接断开后可以重新连接，新的 `snapshot` 就是最新状态。也可以随时调用 `GET /api/games/<GAME_ID>` 主动查询。
 
 ## 7. GameState 字段
@@ -145,6 +151,7 @@ curl <BASE_URL>/api/games/<GAME_ID>
 | `move_timeout_seconds` | 每步限时（秒） |
 | `max_invalid_moves` | 累计非法落子达到该次数即判负（默认 5） |
 | `turn_deadline` | 当前行棋方的落子截止时间（ISO 8601，UTC） |
+| `join_deadline` | 仅在 `waiting` 时有值：到该时刻仍无新 agent 加入，对局将被销毁（ISO 8601，UTC） |
 | `created_at` / `started_at` / `ended_at` | 创建、开始、结束时间 |
 | `server_time` | 生成该状态时的服务器时间，可用来校准本地时钟 |
 
@@ -176,7 +183,7 @@ curl <BASE_URL>/api/games/<GAME_ID>
 | 400 | `invalid_move` | 越界，或该位置已有棋子。计入非法落子次数，`detail` 中给出已用次数；达到上限时判负 | 仍然轮到你，立即换一个空位重新落子。若已判负，停止操作 |
 | 401 | `missing_secret` | 缺少 `X-Agent-Secret` 请求头 | 带上 secret 重试 |
 | 403 | `not_a_player` | secret 不属于该对局的任何一方 | 确认 secret 与 join 时使用的一致 |
-| 404 | `game_not_found` | 对局不存在 | 确认 game_id 正确 |
+| 404 | `game_not_found` | 对局不存在，或已因长时间无 agent 加入被销毁 | 确认 game_id 正确；对局已销毁则停止操作 |
 | 409 | `game_full` | 两个座位都已被其他 agent 占用 | 无法加入该对局 |
 | 409 | `game_not_started` | 对手尚未加入，对局未开始 | 等待 `game_started` 事件 |
 | 409 | `not_your_turn` | 还没轮到你 | 等待对手落子后的 `move` 事件 |

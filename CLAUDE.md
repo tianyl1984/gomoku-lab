@@ -12,6 +12,7 @@ Gomoku (五子棋) platform for **agent-vs-agent** play with no human involvemen
 ./scripts/dev.sh                      # start backend (:8000) + frontend (:5173) together; Ctrl+C stops both
 BACKEND_PORT=9000 FRONTEND_PORT=5174 ./scripts/dev.sh
 MOVE_TIMEOUT_SECONDS=6 ./scripts/dev.sh                # short move clock for testing timeouts
+JOIN_TIMEOUT_SECONDS=10 ./scripts/dev.sh               # abandoned waiting games are destroyed after 10s
 
 # backend (run inside backend/)
 uv sync
@@ -21,6 +22,9 @@ uv run pytest tests/test_board.py::test_overline_counts_as_win   # single test
 uv run python examples/demo_agent.py <game_id>         # run twice (two terminals) for a full game
 uv run python examples/demo_agent.py <game_id> --idle  # joins but never moves -> timeout loss
 uv add <pkg> / uv add --dev <pkg>                      # manage deps (never pip install)
+
+# deploy (run inside deploy/): backend image + nginx image serving the built frontend and proxying /api
+docker compose up -d --build                           # port 80; game settings are hardcoded in docker-compose.yml
 
 # frontend (run inside frontend/)
 npm run dev
@@ -40,12 +44,15 @@ Backend layers (`backend/app/`), from innermost out:
   - `join()` gives the first agent a random free color and is idempotent for the same secret.
   - The game starts when both seats are filled.
   - `check_timeout(now)` makes the side to move lose once `turn_started_at + move_timeout` passes. The clock resets after each move and never runs while the game is `waiting`.
+  - `is_abandoned(now)` is true once a `waiting` game passes `join_deadline`: the later of `created_at` and the last player's `joined_at`, plus `join_timeout`. Started or finished games are never abandoned.
   - Illegal placements (occupied or out of bounds) go through `_record_invalid_move`. It increments `Player.invalid_moves` and always re-raises `InvalidMoveError`, with the running count in the message. Reaching `max_invalid_moves` (default 5, cumulative, never reset) ends the game with `EndReason.INVALID_MOVES` before raising. An invalid move leaves the board, turn and clock untouched.
   - Methods take an optional `now` so tests can control time.
 - `core/arena.py`: the process-global `arena`, which holds the in-memory game table, per-game SSE subscriber queues and event `seq` counters.
-  - `join` / `play` / `expire_timeouts` mutate state and publish events.
+  - `join` / `play` / `expire_timeouts` / `expire_abandoned` mutate state and publish events.
+  - `create()` takes no arguments: every game is 15 × 15 with `win_length` 5. `POST /api/games` has no body.
+  - `expire_abandoned` publishes `game_expired` and then **deletes** the game, its `seq` and its subscriber set, so the id answers 404 from then on. `unsubscribe` must tolerate an already deleted game id.
   - Invalid moves publish nothing, except the `game_over` from the losing one. `arena.play` catches the `InvalidMoveError`, checks `status.is_over`, publishes, and re-raises.
-  - `run_timeout_loop` is started in `main.py`'s lifespan.
+  - `run_timeout_loop` is started in `main.py`'s lifespan and runs both expiry checks.
 - `schemas.py`: pydantic wire models shared by HTTP and SSE. This is the **only** place where `Stone` values are converted to and from `"black"` / `"white"`.
 - `api/docs.py`: serves `docs/game_rule.md` as `text/markdown`. The document is a fixed file (it uses `<BASE_URL>` / `<GAME_ID>` placeholders), so **update it whenever the protocol changes**. `test_game_rule_doc` fails if any event type, status, end reason or error code is missing from it.
 - `api/games.py`: routes. `api/errors.py` maps each domain exception to an HTTP status plus a machine-readable `code` (`{"detail", "code"}`) that agents branch on. To add an error, add a row to `ERRORS` rather than writing try/except in routes. FastAPI's `RequestValidationError` (malformed bodies or params) is also rewritten into this shape, with code `invalid_request`.
@@ -54,18 +61,18 @@ Backend layers (`backend/app/`), from innermost out:
 
 **SSE design:**
 - `GET /api/games/{id}/events` uses FastAPI's built-in `EventSourceResponse`, which sends keepalive pings automatically.
-- On subscribe, the queue is seeded with a `snapshot`. Every event (`player_joined`, `game_started`, `move`, `game_over`) carries the **full `GameState`**, so clients just replace their local state, and reconnecting needs no replay or `Last-Event-ID` handling.
-- A winning move publishes `move` followed by `game_over`. The stream ends after `game_over`, or immediately after the snapshot if the game is already over (`GameEvent.is_terminal`).
+- On subscribe, the queue is seeded with a `snapshot`. Every event (`player_joined`, `game_started`, `move`, `game_over`, `game_expired`) carries the **full `GameState`**, so clients just replace their local state, and reconnecting needs no replay or `Last-Event-ID` handling.
+- A winning move publishes `move` followed by `game_over`. The stream ends after `game_over` or `game_expired`, or immediately after the snapshot if the game is already over (`GameEvent.is_terminal`).
 - The game's existence is checked in a dependency, because an exception raised inside the generator can no longer change the HTTP status.
 - The generator's `finally` unsubscribes the queue. It has been verified to run when a client disconnects mid-stream.
 
-Rules: freestyle gomoku with **no forbidden moves**, where five *or more* in a row wins and a full board is a draw. Board size (5–25) and `win_length` are per-game parameters. `MOVE_TIMEOUT_SECONDS` (default 120) sets the move clock, and `MAX_INVALID_MOVES` (default 5) sets the illegal-placement limit.
+Rules: freestyle gomoku with **no forbidden moves**, where five *or more* in a row wins and a full board is a draw. The board is fixed at 15 × 15 with five to win (`Board` itself stays parameterized, which tests use). `MOVE_TIMEOUT_SECONDS` (default 120) sets the move clock, `MAX_INVALID_MOVES` (default 5) sets the illegal-placement limit, and `JOIN_TIMEOUT_SECONDS` (default 1800) sets how long a waiting game may go without a new agent joining before it is destroyed.
 
 State is in-memory only. `uvicorn --reload` restarts the process on backend file changes and **wipes all games**. The frontend then shows a "game not found (backend may have restarted)" message.
 
 ## Frontend
 
-- Routes: `/` (lobby, which polls `GET /api/games`) and `/games/:id` (spectator page). The game URL is the share link, and Vite's dev server serves `index.html` for it.
+- Routes: `/` (`HomeView`, which creates a game on mount and `router.replace`s to it, so every visit to `/`, including the header link, makes a new game) and `/games/:id` (spectator page). There is no lobby UI; `GET /api/games` still exists. The game URL is the share link, and Vite's dev server serves `index.html` for it.
 - `GameView.vue` first fetches the game with a plain `GET`, because `EventSource` can't surface a 404. It then subscribes through `watchGame()` in `src/api/games.js`.
 - `watchGame()` closes the `EventSource` itself on a terminal event. Otherwise the browser would auto-reconnect after the server closes the stream, looping forever.
 - The countdown is computed from `turn_deadline` plus a clock offset taken from `state.server_time`. The offset and the local `now` must be sampled at the same moment, or the displayed time briefly goes above the limit.
@@ -76,6 +83,12 @@ State is in-memory only. `uvicorn --reload` restarts the process on backend file
 - Coordinates are `(x, y)`, 0-based, with the origin at the top-left: `x` is the column, `y` the row, and the board is `board[y][x]`. This holds for the API, the backend and the tests.
 - Human-readable notation (`frontend/src/utils/notation.js`) is different: the column is a letter starting at A, and the row number counts **up from the bottom** (`size - y`). The move history shows both forms.
 - The frontend calls the backend only through `/api`, which the Vite dev server proxies to `BACKEND_URL` (default `http://127.0.0.1:8000`). SSE works through the proxy, so agents can use either `:5173` or `:8000` as their base URL.
+
+## Deployment (`deploy/`)
+
+- Both Dockerfiles use the repo root as build context. Each has a `<name>.Dockerfile.dockerignore` next to it that whitelists only what it needs.
+- The backend must run as a **single process** (no `--workers`, no replicas), because the arena lives in process memory.
+- `nginx.conf` resolves `backend` through Docker's DNS (`resolver 127.0.0.11` plus a variable `proxy_pass`), so recreating the backend container doesn't break the proxy. Keep `proxy_buffering off` for SSE.
 
 ## scripts/dev.sh gotchas
 

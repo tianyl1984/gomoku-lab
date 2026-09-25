@@ -10,7 +10,6 @@ from app.api.errors import InvalidSecretError, MissingSecretError
 from app.core.arena import arena
 from app.game.game import Game
 from app.schemas import (
-    GameCreate,
     GameState,
     GameSummary,
     JoinRequest,
@@ -46,9 +45,9 @@ ExistingGame = Annotated[Game, Depends(existing_game)]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_game(body: GameCreate | None = None) -> GameState:
-    body = body or GameCreate()
-    return GameState.of(arena.create(body.size, body.win_length))
+async def create_game() -> GameState:
+    """新建对局，棋盘固定 15 × 15、连五获胜。"""
+    return GameState.of(arena.create())
 
 
 @router.get("")
@@ -76,7 +75,8 @@ async def play_move(game_id: str, secret: Secret, body: MoveRequest) -> GameStat
 
 @router.get("/{game_id}/events", response_class=EventSourceResponse)
 async def game_events(game: ExistingGame) -> AsyncIterable[ServerSentEvent]:
-    """SSE：先推送一次 snapshot，之后每次状态变化推送一个事件（均携带完整状态），game_over 后关闭。"""
+    """SSE：先推送一次 snapshot，之后每次状态变化推送一个事件（均携带完整状态），
+    game_over 或 game_expired 后关闭。"""
     queue = arena.subscribe(game.id)
     try:
         while True:
