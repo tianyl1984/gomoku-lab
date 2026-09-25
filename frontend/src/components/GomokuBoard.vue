@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { colLabel, rowLabel } from '../utils/notation'
 
 const props = defineProps({
@@ -8,12 +8,8 @@ const props = defineProps({
   board: { type: Array, required: true },
   moves: { type: Array, default: () => [] },
   winningLine: { type: Array, default: null },
-  currentPlayer: { type: String, default: 'black' },
-  interactive: { type: Boolean, default: true },
   showNumbers: { type: Boolean, default: false },
 })
-
-const emit = defineEmits(['place'])
 
 const CELL = 40
 const MARGIN = 56
@@ -64,50 +60,10 @@ const winningEnds = computed(() => {
   return { x1: pos(x1), y1: pos(y1), x2: pos(x2), y2: pos(y2) }
 })
 
-const svgRef = ref(null)
-const hover = ref(null)
-
-// 屏幕坐标 → 最近的交叉点；超出棋盘返回 null
-function toPoint(evt) {
-  const svg = svgRef.value
-  const ctm = svg?.getScreenCTM()
-  if (!ctm) return null
-  const pt = new DOMPoint(evt.clientX, evt.clientY).matrixTransform(ctm.inverse())
-  const x = Math.round((pt.x - MARGIN) / CELL)
-  const y = Math.round((pt.y - MARGIN) / CELL)
-  if (x < 0 || y < 0 || x >= props.size || y >= props.size) return null
-  return { x, y }
-}
-
-const isEmpty = (p) => p && props.board[p.y][p.x] === 0
-
-function onMove(evt) {
-  const p = props.interactive ? toPoint(evt) : null
-  hover.value = isEmpty(p) ? p : null
-}
-
-function onClick(evt) {
-  if (!props.interactive) return
-  const p = toPoint(evt)
-  if (isEmpty(p)) {
-    hover.value = null
-    emit('place', p)
-  }
-}
 </script>
 
 <template>
-  <svg
-    ref="svgRef"
-    class="board"
-    :class="{ interactive }"
-    :viewBox="`0 0 ${viewSize} ${viewSize}`"
-    role="img"
-    aria-label="五子棋棋盘"
-    @mousemove="onMove"
-    @mouseleave="hover = null"
-    @click="onClick"
-  >
+  <svg class="board" :viewBox="`0 0 ${viewSize} ${viewSize}`" role="img" aria-label="五子棋棋盘">
     <defs>
       <radialGradient id="stone-black" cx="35%" cy="35%" r="65%">
         <stop offset="0%" stop-color="#6b6b6b" />
@@ -146,15 +102,6 @@ function onClick(evt) {
       <text v-for="i in indices" :key="`c${i}`" :x="pos(i)" :y="LABEL_OFFSET">{{ colLabel(i) }}</text>
       <text v-for="i in indices" :key="`r${i}`" :x="LABEL_OFFSET" :y="pos(i)">{{ rowLabel(i, size) }}</text>
     </g>
-
-    <circle
-      v-if="hover"
-      class="ghost"
-      :cx="pos(hover.x)"
-      :cy="pos(hover.y)"
-      :r="STONE_R"
-      :fill="`url(#stone-${currentPlayer})`"
-    />
 
     <circle
       v-for="s in stones"
@@ -199,9 +146,6 @@ function onClick(evt) {
   height: auto;
   user-select: none;
 }
-.board.interactive {
-  cursor: pointer;
-}
 .wood {
   fill: #dcb35c;
 }
@@ -231,10 +175,6 @@ function onClick(evt) {
   stroke-width: 0.5;
   filter: drop-shadow(1px 2px 1.5px rgb(0 0 0 / 0.3));
 }
-.ghost {
-  opacity: 0.45;
-  pointer-events: none;
-}
 .move-number {
   font-size: 15px;
   font-weight: 600;
@@ -244,7 +184,6 @@ function onClick(evt) {
   paint-order: stroke;
   stroke-width: 4px;
   stroke-linejoin: round;
-  pointer-events: none;
 }
 .move-number.black {
   fill: #fff;
@@ -259,13 +198,11 @@ function onClick(evt) {
 }
 .last-marker {
   fill: #e53935;
-  pointer-events: none;
 }
 .win-line {
   stroke: #e53935;
   stroke-width: 4;
   stroke-linecap: round;
   opacity: 0.75;
-  pointer-events: none;
 }
 </style>

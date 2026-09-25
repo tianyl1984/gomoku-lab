@@ -5,8 +5,11 @@
   --surface: #ffffff;
   --border: #dcd7ce;
   --accent: #b5452c;
+  --ok: #2e7d32;
+  --warn: #b26a00;
   --error: #b3261e;
   --error-bg: #fdecea;
+  --code-bg: #f1eee8;
 
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
@@ -22,8 +25,11 @@
     --surface: #26282b;
     --border: #3a3d42;
     --accent: #e07a5f;
+    --ok: #81c784;
+    --warn: #ffb74d;
     --error: #ffb4ab;
     --error-bg: #3b1d1a;
+    --code-bg: #1f2023;
   }
 }
 
@@ -34,4 +40,75 @@
 body {
   margin: 0;
   background-color: var(--bg);
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+select,
+button {
+  font: inherit;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.card {
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.error {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+/* 棋子色块 */
+.chip {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  flex: none;
+  vertical-align: -0.1em;
+}
+.chip.black {
+  background: radial-gradient(circle at 35% 35%, #6b6b6b, #111);
+}
+.chip.white {
+  background: radial-gradient(circle at 35% 35%, #fff, #d4d4d4);
+  box-shadow: inset 0 0 0 1px #9e9e9e;
 }
