@@ -25,6 +25,18 @@ cleanup() {
   for pid in ${pids[@]+"${pids[@]}"}; do
     kill -TERM -- "-$pid" 2>/dev/null || true
   done
+  # 最多等 5 秒优雅退出，仍未退出的强制结束
+  for _ in $(seq 50); do
+    alive=0
+    for pid in ${pids[@]+"${pids[@]}"}; do
+      kill -0 -- "-$pid" 2>/dev/null && alive=1
+    done
+    [ "$alive" = 0 ] && break
+    sleep 0.1
+  done
+  for pid in ${pids[@]+"${pids[@]}"}; do
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  done
   wait 2>/dev/null || true
   exit "$code"
 }
@@ -32,8 +44,13 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# 为每行输出加前缀，区分两个服务的日志
-prefix() { sed -u "s/^/[$1] /"; }
+# 为每行输出加前缀，区分两个服务的日志。
+# 前缀进程忽略 INT/TERM，读到 EOF（服务退出）后自行结束；
+# 否则 Ctrl+C 会先杀掉它，服务写日志时管道断开，uvicorn 可能卡在退出流程。
+prefix() {
+  trap '' INT TERM
+  sed -u "s/^/[$1] /"
+}
 
 echo "==> 启动后端 http://127.0.0.1:${BACKEND_PORT}"
 (cd "$ROOT_DIR/backend" && exec uv run uvicorn app.main:app --reload \
