@@ -21,6 +21,7 @@ uv run pytest                                          # all tests
 uv run pytest tests/test_board.py::test_overline_counts_as_win   # single test
 uv run python examples/demo_agent.py <game_id>         # run twice (two terminals) for a full game
 uv run python examples/demo_agent.py <game_id> --idle  # joins but never moves -> timeout loss
+uv run python examples/dohnuts_agent.py <game_id>      # moves chosen only by the Dohnuts model (needs its server on :7878)
 uv add <pkg> / uv add --dev <pkg>                      # manage deps (never pip install)
 
 # deploy (run inside deploy/): backend image + nginx image serving the built frontend and proxying /api

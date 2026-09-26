@@ -23,6 +23,8 @@ import urllib.request
 from collections.abc import Iterator
 
 DIRECTIONS = ((1, 0), (0, 1), (1, 1), (1, -1))
+# Cloudflare rejects urllib's default "Python-urllib/x.y" User-Agent with 403 (error 1010).
+USER_AGENT = "gomoku-demo-agent/1.0"
 
 
 def request(method: str, url: str, secret: str, body: dict | None = None) -> dict:
@@ -30,7 +32,11 @@ def request(method: str, url: str, secret: str, body: dict | None = None) -> dic
         url,
         method=method,
         data=json.dumps(body or {}).encode(),
-        headers={"Content-Type": "application/json", "X-Agent-Secret": secret},
+        headers={
+            "Content-Type": "application/json",
+            "X-Agent-Secret": secret,
+            "User-Agent": USER_AGENT,
+        },
     )
     with urllib.request.urlopen(req) as res:
         return json.load(res)
@@ -38,7 +44,8 @@ def request(method: str, url: str, secret: str, body: dict | None = None) -> dic
 
 def sse_events(url: str) -> Iterator[tuple[str, dict]]:
     """Yield (event_type, data) from an SSE stream until the server closes it."""
-    with urllib.request.urlopen(url) as res:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req) as res:
         event, data = "message", []
         for raw in res:
             line = raw.decode().rstrip("\r\n")
